@@ -127,6 +127,7 @@ tests:
   # ---------------------------------------------------------------- T3 Cuaca BMKG
   - name: duplikat_grain_desa_slot
     topic: t3
+    dimension: uniqueness
     severity: blocking
     scope: source
     sql: >-
@@ -134,27 +135,36 @@ tests:
       GROUP BY 1,2 HAVING count(*) > 1)
     expected: pass
     perkiraan_baris: 0
-    justifikasi: Grain = satu desa per slot; kembar berarti snapshot tertarik dua kali.
+    justifikasi: >-
+      BLOCKING — grain fact = satu desa per slot; baris kembar menggandakan curah
+      hujan di agregasi wilayah, jadi keputusan alokasi bantuan bisa salah total.
   - name: curah_hujan_negatif
     topic: t3
+    dimension: validity
     severity: blocking
     scope: source
     sql: >-
       SELECT count(*) FROM raw_prakiraan_cuaca WHERE TRY_CAST(tp AS DOUBLE) < 0
     expected: pass
     perkiraan_baris: 0
-    justifikasi: Curah hujan tidak bisa negatif; kalau ada, satuannya bukan mm.
+    justifikasi: >-
+      BLOCKING — curah hujan negatif fisik tidak mungkin; kalau lolos, tiap measure
+      dan status peringatan cuaca yang dihitung dari tp otomatis salah, bukan sedikit meleset.
   - name: kolom_vs_kosong_seluruhnya
     topic: t3
+    dimension: completeness
     severity: warning
     scope: source
     sql: >-
       SELECT count(*) FROM raw_prakiraan_cuaca WHERE vs IS NULL OR vs = ''
     expected: fail
     perkiraan_baris: 1156
-    justifikasi: Kolom 100% kosong — putuskan dibuang atau diisi, jangan dibiarkan masuk dimensi.
+    justifikasi: >-
+      WARNING — kolom vs 100% kosong tapi tidak dipakai measure/metrik manapun saat ini;
+      keputusan yang ada tidak berubah, cukup ditandai untuk dibuang atau diisi nanti.
   - name: deskripsi_cuaca_dipakai_lebih_dari_satu_kode
     topic: t3
+    dimension: consistency
     severity: warning
     scope: source
     sql: >-
@@ -162,22 +172,31 @@ tests:
       GROUP BY 1 HAVING count(DISTINCT weather) > 1)
     expected: fail
     perkiraan_baris: 1
-    justifikasi: Kode 0 dan 1 dua-duanya 'Cerah' — kamus tidak 1:1, jadi deskripsi tidak boleh jadi kunci.
+    justifikasi: >-
+      WARNING — kode 0 dan 1 sama-sama berarti 'Cerah', kamus kode↔deskripsi tidak 1:1;
+      dashboard tetap benar selama join pakai kode, jadi cukup ditandai, bukan diblok.
   - name: curah_hujan_nol_tidak_wajar
     topic: t3
+    dimension: accuracy
     severity: warning
     scope: source
     sql: >-
       SELECT count(*) FROM raw_prakiraan_cuaca WHERE TRY_CAST(tp AS DOUBLE) = 0
     expected: fail
     perkiraan_baris: 812
-    justifikasi: 70% slot kering — cukup untuk membatalkan 'curah hujan' sebagai satu-satunya measure.
+    justifikasi: >-
+      WARNING — tp=0 di 70% slot itu wajar untuk musim kering Bogor, bukan bukti error;
+      diberi tahu ke analis supaya tidak salah baca "hujan" sebagai satu-satunya measure cuaca.
   - name: time_index_sebagai_jam
     topic: t3
+    dimension: timeliness
     severity: warning
     scope: source
     sql: >-
       SELECT count(*) FROM raw_prakiraan_cuaca WHERE TRY_CAST(split_part(time_index, '-', 1) AS INT) > 23
     expected: fail
     perkiraan_baris: 625
-    justifikasi: time_index adalah offset jam (11-37), bukan jam dinding — kalau dipakai sebagai jam, analisis waktu salah.
+    justifikasi: >-
+      WARNING — time_index adalah offset jam-ke-depan (11-37) dari analysis_date, bukan jam
+      dinding; local_datetime tetap benar untuk urutan waktu, jadi cukup ditandai agar time_index
+      tidak salah dibaca sebagai jam saat dianalisis lebih jauh.
